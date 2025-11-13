@@ -3,6 +3,7 @@
 # Run from terminal:   streamlit run rfp_simulator.py
 #
 # FIX: use st.form("rfp_form") instead of st.form("form") to avoid session_state key collision.
+# FIX: remove writer.save() in to_excel_bytes to avoid AttributeError on Streamlit Cloud
 
 import streamlit as st
 import pandas as pd
@@ -118,8 +119,7 @@ def to_excel_bytes(df_dict, run_meta):
         meta_df = pd.DataFrame(list(run_meta.items()), columns=["Key", "Value"])
         meta_df.to_excel(writer, sheet_name="Meta", index=False)
 
-        writer.save()
-
+        # no writer.save() here
     return output.getvalue()
 
 def to_pdf_bytes(run_meta, inputs_display, df_solutions, financial_summary):

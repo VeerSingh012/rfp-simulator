@@ -1,13 +1,8 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Thu Nov 13 21:29:41 2025
-
-@author: jasbirsin
-"""
-
 # rfp_simulator.py
 # Streamlit RFP Simulator - calculate/display results + export XLSX/PDF
 # Run from terminal:   streamlit run rfp_simulator.py
+#
+# FIX: use st.form("rfp_form") instead of st.form("form") to avoid session_state key collision.
 
 import streamlit as st
 import pandas as pd
@@ -58,7 +53,10 @@ ALL_TECHS = list(TECH_LICENSE_COSTS.keys())
 # Helper Functions
 # ---------------------------
 def fmt_money(x):
-    return f"{CURRENCY}{x:,.0f}"
+    try:
+        return f"{CURRENCY}{int(round(x)):,}"
+    except:
+        return f"{CURRENCY}0"
 
 def per_solution_table(headcount, selected_techs):
     rows = []
@@ -91,11 +89,16 @@ def calculate_costs(headcount, selected_techs):
     headcount_cost = headcount * ANNUAL_COST_PER_FTE
     implementation_cost = headcount_cost * IMPLEMENTATION_PCT
     annual_savings = headcount_cost * SAVINGS_PCT
-    tech_cost = sum(TECH_LICENSE_COSTS[t] for t in selected_techs)
+    tech_cost = sum(TECH_LICENSE_COSTS.get(t, 0) for t in selected_techs)
 
     net_annual_cost = headcount_cost - annual_savings + tech_cost
 
-    payback_years = implementation_cost / annual_savings if annual_savings else None
+    payback_years = None
+    if annual_savings and annual_savings > 0:
+        try:
+            payback_years = implementation_cost / annual_savings
+        except:
+            payback_years = None
 
     return {
         "headcount_cost": headcount_cost,
@@ -128,8 +131,8 @@ def to_pdf_bytes(run_meta, inputs_display, df_solutions, financial_summary):
     pdf.cell(0, 10, "RFP Simulator Summary", ln=True)
 
     pdf.set_font("Arial", size=10)
-    pdf.cell(0, 6, f"Run ID: {run_meta['RunID']}", ln=True)
-    pdf.cell(0, 6, f"Timestamp: {run_meta['Timestamp']}", ln=True)
+    pdf.cell(0, 6, f"Run ID: {run_meta.get('RunID','')}", ln=True)
+    pdf.cell(0, 6, f"Timestamp: {run_meta.get('Timestamp','')}", ln=True)
     pdf.ln(4)
 
     pdf.set_font("Arial", "B", 11)
@@ -152,11 +155,11 @@ def to_pdf_bytes(run_meta, inputs_display, df_solutions, financial_summary):
     pdf.ln()
 
     for _, row in df_solutions.iterrows():
-        pdf.cell(col_w[0], 6, row["Solution"], border=1)
-        pdf.cell(col_w[1], 6, fmt_money(row["License Cost"]), border=1)
-        pdf.cell(col_w[2], 6, fmt_money(row["Development Cost"]), border=1)
-        pdf.cell(col_w[3], 6, fmt_money(row["User License Cost"]), border=1)
-        pdf.cell(col_w[4], 6, fmt_money(row["Total Cost"]), border=1)
+        pdf.cell(col_w[0], 6, str(row.get("Solution","")), border=1)
+        pdf.cell(col_w[1], 6, fmt_money(row.get("License Cost",0)), border=1)
+        pdf.cell(col_w[2], 6, fmt_money(row.get("Development Cost",0)), border=1)
+        pdf.cell(col_w[3], 6, fmt_money(row.get("User License Cost",0)), border=1)
+        pdf.cell(col_w[4], 6, fmt_money(row.get("Total Cost",0)), border=1)
         pdf.ln()
 
     pdf.ln(4)
@@ -173,8 +176,9 @@ def to_pdf_bytes(run_meta, inputs_display, df_solutions, financial_summary):
 # UI - Input Form
 # ---------------------------
 st.title("RFP Simulator")
-st.write("Enter details and click **Calculate** to view costs.")
+st.write("Enter details and click **Calculate** to view the cost breakdown and export results.")
 
+# session state keys
 if "form" not in st.session_state:
     st.session_state.form = {
         "headcount": "",
@@ -185,17 +189,18 @@ if "form" not in st.session_state:
         "techs": []
     }
 
-with st.form("form"):
+# NOTE: form widget key renamed to "rfp_form" to avoid collision with session_state.form
+with st.form("rfp_form"):
     col1, col2 = st.columns(2)
 
     with col1:
         headcount = st.text_input("Headcount", st.session_state.form["headcount"])
-        region = st.selectbox("Region", ["", "North America", "EMEA", "APAC", "LATAM"])
-        hc_category = st.selectbox("HC Category", ["", "Ops", "Finance", "IT", "HR"])
+        region = st.selectbox("Region", ["", "North America", "EMEA", "APAC", "LATAM"], index=0 if st.session_state.form["region"]=="" else None)
+        hc_category = st.selectbox("HC Category", ["", "Ops", "Finance", "IT", "HR"], index=0 if st.session_state.form["hc_category"]=="" else None)
 
     with col2:
-        process_type = st.selectbox("Process Type", ["", "Claims", "Billing", "Enrollment", "Customer Service"])
-        transform_scale = st.selectbox("Transformation Scale", ["", "Small", "Medium", "Large"])
+        process_type = st.selectbox("Process Type", ["", "Claims", "Billing", "Enrollment", "Customer Service"], index=0 if st.session_state.form["process_type"]=="" else None)
+        transform_scale = st.selectbox("Transformation Scale", ["", "Small", "Medium", "Large"], index=0 if st.session_state.form["transform_scale"]=="" else None)
 
         st.markdown("**Technologies**")
         techs = []
@@ -232,7 +237,7 @@ if sample:
 # Calculate
 # ---------------------------
 if calculate:
-
+    # persist current inputs
     st.session_state.form.update({
         "headcount": headcount,
         "region": region,
@@ -246,7 +251,7 @@ if calculate:
     errors = []
 
     try:
-        hc_val = int(headcount)
+        hc_val = int(float(str(headcount).strip()))
         if hc_val <= 0:
             errors.append("Headcount must be > 0.")
     except:
@@ -261,6 +266,7 @@ if calculate:
             st.write("- " + e)
         st.stop()
 
+    # Calculations
     results = calculate_costs(hc_val, techs)
     df_solutions = per_solution_table(hc_val, techs)
 
@@ -275,8 +281,8 @@ if calculate:
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Annual Labor Cost", fmt_money(results["headcount_cost"]))
-    c2.metric("Annual Savings", fmt_money(-results["annual_savings"]))
-    c3.metric("Tooling (Annual)", fmt_money(results["tech_cost"]))
+    c2.metric("Estimated Annual Savings", fmt_money(-results["annual_savings"]))
+    c3.metric("Annual Tooling (selected)", fmt_money(results["tech_cost"]))
 
     st.write("**Implementation (one-time):**", fmt_money(results["implementation_cost"]))
     st.write("**Net Annual Cost:**", fmt_money(results["net_annual_cost"]))
@@ -326,4 +332,3 @@ if calculate:
         file_name=f"RFP_Summary_{run_meta['RunID']}.pdf",
         mime="application/pdf"
     )
-
